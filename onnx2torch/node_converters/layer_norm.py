@@ -54,17 +54,17 @@ def _(node: OnnxNode, graph: OnnxGraph) -> OperationConverterResult:
         input_value_info = graph.value_info[node.input_values[0]]
         input_shape = get_shape_from_value_info(input_value_info)
 
-        torch_module = nn.LayerNorm(
-            normalized_shape=input_shape[axis:],
-            eps=epsilon,
-            elementwise_affine=True,
-        )
-
         scale_value_name = node.input_values[1]
         bias_value_name = node.input_values[2] if len(node.input_values) > 2 else None
 
         with torch.no_grad():
-            torch_module.weight.data = graph.initializers[scale_value_name].to_torch()
+            scale = graph.initializers[scale_value_name].to_torch()
+            torch_module = nn.LayerNorm(
+                normalized_shape=scale.shape[0],
+                eps=epsilon,
+                elementwise_affine=True,
+            )
+            torch_module.weight.data = scale
             if bias_value_name is not None:
                 torch_module.bias.data = graph.initializers[bias_value_name].to_torch()
 

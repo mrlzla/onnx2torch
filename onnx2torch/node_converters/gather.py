@@ -11,6 +11,7 @@ from typing import Tuple
 from typing import Union
 
 import torch
+import numpy as np
 from torch import nn
 
 from onnx2torch.node_converters.registry import add_converter
@@ -106,8 +107,8 @@ class OnnxGatherND(nn.Module, OnnxToTorchModuleWithCustomExport):
 
     @staticmethod
     def _gather_nd(data: torch.Tensor, indices: torch.Tensor, batch_dims: int) -> torch.Tensor:
-        if batch_dims != 0:
-            raise NotImplementedError('GatherND for batch_dims != 0 is not implemented')
+        # if batch_dims != 0:
+        #     raise NotImplementedError('GatherND for batch_dims != 0 is not implemented')
 
         r, m = len(data.shape), indices.shape[-1]  # pylint: disable=C0103
         if m > r or m < 1:
@@ -116,15 +117,38 @@ class OnnxGatherND(nn.Module, OnnxToTorchModuleWithCustomExport):
                 f'got {m} and {r} respectively'
             )
 
-        total_samples = indices.shape[:-1].numel()
-        output_shape = indices.shape[:-1] + data.shape[m:]
-        indices_ = torch.split(
-            tensor=indices.reshape(total_samples, m).transpose(0, 1),
-            split_size_or_sections=1,
-            dim=0,
-        )
+        if batch_dims == 0:
+            total_samples = indices.shape[:-1].numel()
+            output_shape = indices.shape[:-1] + data.shape[m:]
+            indices_ = torch.split(
+                tensor=indices.reshape(total_samples, m).transpose(0, 1),
+                split_size_or_sections=1,
+                dim=0,
+            )
+            return data[indices_].reshape(output_shape).contiguous()
+    
+        # Handle case where batch_dims != 0
+        batch_dims_list = data.size()[:batch_dims]  # [b1, ..., bn]
+        batch_size = np.cumprod(list(batch_dims_list))[-1]  # b1 * ... * bn
+        c_dim = data.size()[-1]  # c
+        grid_dims = data.size()[batch_dims:-1]  # [g1, ..., gm]
+        n_indices = indices.size(-2)  # x
+        n_pos = indices.size(-1)  # m
 
-        return data[indices_].reshape(output_shape).contiguous()
+        # reshape leadning batch dims to a single batch dim
+        data = data.reshape(batch_size, *grid_dims, c_dim)
+        indices = indices.reshape(batch_size, n_indices, n_pos).int()
+
+        # build gather indices
+        # gather for each of the data point in this "batch"
+        batch_enumeration = torch.arange(batch_size).unsqueeze(1)
+        gather_dims = [indices[:, :, i].int() for i in range(len(grid_dims))]
+        gather_dims.insert(0, batch_enumeration)
+        gathered = data[gather_dims]
+
+        # reshape back to the shape with leading batch dims
+        gathered = gathered.reshape(*batch_dims_list, n_indices, c_dim)
+        return gathered
 
 
 @add_converter(operation_type='Gather', version=1)

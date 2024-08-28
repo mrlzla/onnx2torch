@@ -34,7 +34,9 @@ class OnnxSplit13(nn.Module, OnnxToTorchModule):  # pylint: disable=missing-clas
             split_size_or_sections = axis_len // self.num_splits
         else:
             split_size_or_sections = split.tolist()
-
+        
+        if isinstance(input_tensor, tuple):
+            input_tensor = input_tensor[0]
         return torch.split(input_tensor, split_size_or_sections, dim=self.axis)
 
 
